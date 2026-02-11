@@ -31,10 +31,10 @@ export const getTechnicalIndicators = async (code) => {
 }
 
 // 个股诊断
-export const diagnoseStock = async (code, strategyPreference = '稳健型', forceRefresh = false) => {
+export const diagnoseStock = async (code, userPreference = '', forceRefresh = false) => {
     const response = await api.post('/analysis/diagnose', {
         code,
-        strategy_preference: strategyPreference,
+        user_preference: userPreference,
         force_refresh: forceRefresh
     })
     return response.data

@@ -1,0 +1,24 @@
+{
+    "local_llm": {
+        "enabled": true,
+        "provider": "llama_cpp",
+        "api_url": "http://192.168.1.100:8080/",
+        "api_key": "",
+        "model": "nemotron-30b",
+        "timeout": 120,
+        "max_tokens": 4096,
+        "temperature": 0.7
+    },
+    "fallback": {
+        "enabled": true,
+        "use_cloud_on_local_failure": true
+    },
+    "cache": {
+        "memory_cache_size": 1000,
+        "memory_cache_ttl": 300,
+        "daily_expire_hour": 15,
+        "daily_expire_minute": 30,
+        "weekly_expire_day": 6,
+        "longterm_expire_days": 7
+    }
+}

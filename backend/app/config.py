@@ -20,8 +20,11 @@ def load_json_config(config_path: str) -> dict:
 
 class BaseConfig:
     """基础配置"""
-    # Flask配置
-    SECRET_KEY = os.environ.get('SECRET_KEY', 'ghetto-quant-secret-key')
+    # Flask配置 - SECRET_KEY安全处理
+    SECRET_KEY = os.environ.get('SECRET_KEY')
+    if not SECRET_KEY:
+        import secrets
+        SECRET_KEY = secrets.token_hex(32)  # 开发环境生成随机密钥
     
     # 数据库配置
     BASE_DIR = Path(__file__).parent.parent.parent

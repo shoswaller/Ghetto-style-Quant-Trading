@@ -18,7 +18,14 @@ def create_app(config_name='default'):
     
     # 初始化扩展
     db.init_app(app)
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    # CORS配置 - 限制允许的来源
+    allowed_origins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173"
+    ]
+    CORS(app, resources={r"/api/*": {"origins": allowed_origins}})
     
     # 注册蓝图
     from app.api import stock_bp, analysis_bp

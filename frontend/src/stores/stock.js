@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { diagnoseStock, getStockInfo } from '@/api/stock'
 
 export const useStockStore = defineStore('stock', () => {
@@ -8,10 +8,22 @@ export const useStockStore = defineStore('stock', () => {
     const analysisResult = ref(null)
     const isLoading = ref(false)
     const error = ref(null)
-    const strategyPreference = ref('稳健型')
 
-    // 历史查询记录
-    const searchHistory = ref([])
+    // 用户投资偏好描述（可选，由LLM自主分析）- 从localStorage恢复
+    const userPreference = ref(localStorage.getItem('userPreference') || '')
+
+    // 历史查询记录 - 从localStorage恢复
+    const savedHistory = localStorage.getItem('searchHistory')
+    const searchHistory = ref(savedHistory ? JSON.parse(savedHistory) : [])
+
+    // 持久化到localStorage
+    watch(userPreference, (newVal) => {
+        localStorage.setItem('userPreference', newVal)
+    })
+
+    watch(searchHistory, (newVal) => {
+        localStorage.setItem('searchHistory', JSON.stringify(newVal))
+    }, { deep: true })
 
     // 计算属性
     const hasResult = computed(() => !!analysisResult.value)
@@ -28,7 +40,7 @@ export const useStockStore = defineStore('stock', () => {
         error.value = null
 
         try {
-            const response = await diagnoseStock(code, strategyPreference.value, forceRefresh)
+            const response = await diagnoseStock(code, userPreference.value, forceRefresh)
 
             if (response.code === 200) {
                 currentStock.value = response.data.stock_info
@@ -57,7 +69,7 @@ export const useStockStore = defineStore('stock', () => {
         }
 
         // 添加到开头
-        searchHistory.value.unshift({ code, name, time: new Date() })
+        searchHistory.value.unshift({ code, name, time: new Date().toISOString() })
 
         // 保留最近10条
         if (searchHistory.value.length > 10) {
@@ -71,8 +83,8 @@ export const useStockStore = defineStore('stock', () => {
         error.value = null
     }
 
-    const setStrategyPreference = (strategy) => {
-        strategyPreference.value = strategy
+    const setUserPreference = (preference) => {
+        userPreference.value = preference
     }
 
     return {
@@ -81,7 +93,7 @@ export const useStockStore = defineStore('stock', () => {
         analysisResult,
         isLoading,
         error,
-        strategyPreference,
+        userPreference,
         searchHistory,
 
         // 计算属性
@@ -91,6 +103,6 @@ export const useStockStore = defineStore('stock', () => {
         // 方法
         diagnose,
         clearResult,
-        setStrategyPreference
+        setUserPreference
     }
 })

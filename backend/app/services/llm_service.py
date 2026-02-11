@@ -2,6 +2,7 @@
 LLM服务 - 整合局域网LLM和云端LLM
 """
 import json
+import logging
 from typing import Dict, Optional
 from app.services.local_llm import local_llm
 from app.services.cloud_llm import cloud_llm
@@ -13,6 +14,7 @@ from app.utils.prompts import (
     SYSTEM_PROMPT
 )
 
+logger = logging.getLogger(__name__)
 
 class LLMService:
     """LLM服务 - 协调端侧和云端LLM"""
@@ -23,14 +25,14 @@ class LLMService:
         self.data_service = data_service
         self.cache_service = cache_service
     
-    def diagnose_stock(self, code: str, strategy_preference: str = "稳健型",
+    def diagnose_stock(self, code: str, user_preference: str = "",
                        force_refresh: bool = False) -> Dict:
         """
         个股诊断 - 核心功能
         
         Args:
             code: 股票代码
-            strategy_preference: 策略偏好（稳健型/激进型/价值型）
+            user_preference: 用户投资偏好描述（可选，由LLM自主分析）
             force_refresh: 是否强制刷新缓存
             
         Returns:
@@ -82,7 +84,7 @@ class LLMService:
             daily_data=daily_data[-20:],  # 只取最近20天
             technical=technical,
             fund_flow=fund_flow,
-            strategy_preference=strategy_preference
+            user_preference=user_preference
         )
         
         # 8. 合并技术指标到结果
@@ -101,38 +103,29 @@ class LLMService:
     
     def _analyze_with_llm(self, stock_info: Dict, daily_data: list,
                           technical: Dict, fund_flow: Optional[Dict],
-                          strategy_preference: str) -> Dict:
+                          user_preference: str) -> Dict:
         """
-        使用LLM进行分析
+        使用云端LLM进行分析
         
         流程：
-        1. 优先使用局域网LLM结构化数据
-        2. 使用云端LLM进行分析
+        1. 准备数据摘要
+        2. 直接使用云端LLM进行分析（LLM自主给出策略）
         """
+        # 检查云端LLM是否可用
+        if not self.cloud_llm.enabled:
+            raise RuntimeError("未配置云端LLM，无法进行分析")
+        
         # 准备数据摘要
         data_summary = self._prepare_data_summary(
             stock_info, daily_data, technical, fund_flow
         )
         
-        # 方案1：有局域网LLM时，先用它处理数据
-        structured_data = data_summary  # 默认使用原始数据
-        
-        if self.local_llm.enabled:
-            try:
-                structured_prompt = DATA_STRUCTURE_PROMPT.format(raw_data=data_summary)
-                structured_data = self.local_llm.complete(structured_prompt)
-            except Exception as e:
-                print(f"局域网LLM调用失败，使用原始数据: {e}")
-        
-        # 方案2：使用云端LLM进行分析
-        if not self.cloud_llm.enabled:
-            raise RuntimeError("未配置云端LLM，无法进行分析")
-        
+        # 使用云端LLM进行分析
         analysis_prompt = STOCK_ANALYSIS_PROMPT.format(
             stock_name=stock_info.get('name', ''),
             stock_code=stock_info.get('code', ''),
-            structured_data=structured_data,
-            strategy_preference=strategy_preference
+            structured_data=data_summary,
+            user_preference=user_preference if user_preference else "无特殊偏好，请自主分析并给出完整策略建议"
         )
         
         try:
@@ -222,20 +215,15 @@ class LLMService:
         }
     
     def _get_cached_analysis(self, code: str, data_hash: str) -> Optional[Dict]:
-        """获取缓存的分析结果（合并三个维度）"""
-        # 尝试获取完整缓存
-        for analysis_type in ['daily', 'weekly', 'longterm']:
-            cached = self.cache_service.get(code, analysis_type, data_hash)
-            if cached:
-                return cached
-        return None
+        """获取缓存的分析结果"""
+        # 简化缓存：只使用一个键
+        cached = self.cache_service.get(code, 'analysis', data_hash)
+        return cached
     
     def _cache_analysis(self, code: str, data_hash: str, result: Dict):
         """缓存分析结果"""
-        # 缓存完整结果
-        self.cache_service.set(code, 'daily', data_hash, result)
-        self.cache_service.set(code, 'weekly', data_hash, result)
-        self.cache_service.set(code, 'longterm', data_hash, result)
+        # 简化缓存：只存储一次
+        self.cache_service.set(code, 'analysis', data_hash, result)
 
 
 # 单例

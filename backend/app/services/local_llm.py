@@ -58,6 +58,15 @@ class LocalLLM:
         Returns:
             LLM生成的内容
         """
+        # 打印请求内容
+        print("=" * 50)
+        print("[局域网LLM请求]")
+        print(f"URL: {self.api_url}/v1/chat/completions")
+        if system_prompt:
+            print(f"\n[系统提示词]\n{system_prompt[:500]}...")
+        print(f"\n[用户提示词]\n{prompt[:1000]}...")
+        print("=" * 50)
+        
         if not self.enabled:
             raise RuntimeError("局域网LLM未启用，请检查配置文件")
         

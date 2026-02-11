@@ -2,6 +2,11 @@
 丐版量化交易系统 - 启动入口
 """
 import os
+from dotenv import load_dotenv
+
+# 加载 .env 文件（如果存在）
+load_dotenv()
+
 from app import create_app
 
 # 确定运行环境
@@ -13,7 +18,7 @@ if __name__ == '__main__':
     print("丐版量化交易系统")
     print("=" * 50)
     print(f"运行环境: {env}")
-    print(f"API地址: http://127.0.0.1:5000")
+    print(f"API地址: http://127.0.0.1:5001")
     print("=" * 50)
     
     # 检查LLM配置
@@ -32,4 +37,4 @@ if __name__ == '__main__':
     
     print("=" * 50)
     
-    app.run(host='0.0.0.0', port=5000, debug=(env == 'development'))
+    app.run(host='127.0.0.1', port=5001, debug=(env == 'development'))

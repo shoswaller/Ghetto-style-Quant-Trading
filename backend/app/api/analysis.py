@@ -1,13 +1,48 @@
 """
 分析相关API
 """
+import re
+import logging
 from flask import Blueprint, request, jsonify
 from app.services.llm_service import llm_service
 from app.services.cache_service import cache_service
 from app.models.analysis import UserOperation
 from app import db
 
+logger = logging.getLogger(__name__)
 analysis_bp = Blueprint('analysis', __name__)
+
+
+def validate_stock_code(code: str) -> tuple:
+    """
+    验证股票代码格式
+    
+    Returns:
+        (is_valid, cleaned_code, error_message)
+    """
+    if not code or not isinstance(code, str):
+        return False, "", "股票代码不能为空"
+    
+    code = code.strip()
+    
+    # 去除前缀
+    upper_code = code.upper()
+    prefixes = ['SH', 'SZ', 'BJ']
+    for prefix in prefixes:
+        if upper_code.startswith(prefix):
+            code = code[2:]
+            break
+    
+    # 验证格式：6位数字
+    if not re.match(r'^[0-9]{6}$', code):
+        return False, "", "股票代码格式错误，应为6位数字"
+    
+    # 验证开头数字（有效市场前缀）
+    first_digit = code[0]
+    if first_digit not in ('0', '3', '6', '4', '8'):
+        return False, "", "无效的股票代码前缀"
+    
+    return True, code, ""
 
 
 @analysis_bp.route('/diagnose', methods=['POST'])
@@ -18,7 +53,7 @@ def diagnose_stock():
     POST /api/analysis/diagnose
     {
         "code": "000001",
-        "strategy_preference": "稳健型",
+        "user_preference": "我是长期投资者，风险承受能力中等",  // 可选，用户自由描述
         "force_refresh": false
     }
     """
@@ -32,24 +67,24 @@ def diagnose_stock():
             }), 400
         
         code = data.get('code', '').strip()
-        if not code:
+        
+        # 验证股票代码
+        is_valid, cleaned_code, error_msg = validate_stock_code(code)
+        if not is_valid:
             return jsonify({
                 'code': 400,
-                'message': '股票代码不能为空',
+                'message': error_msg,
                 'data': None
             }), 400
         
-        # 标准化股票代码（去除前缀）
-        if code.startswith(('sh', 'sz', 'SH', 'SZ')):
-            code = code[2:]
-        
-        strategy_preference = data.get('strategy_preference', '稳健型')
+        # 用户投资偏好描述（可选，由LLM自主分析）
+        user_preference = data.get('user_preference', '').strip()
         force_refresh = data.get('force_refresh', False)
         
         # 调用LLM服务进行诊断
         result = llm_service.diagnose_stock(
-            code=code,
-            strategy_preference=strategy_preference,
+            code=cleaned_code,
+            user_preference=user_preference,
             force_refresh=force_refresh
         )
         

@@ -4,8 +4,52 @@
 import akshare as ak
 import pandas as pd
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Callable
 import numpy as np
+import logging
+import time
+import hashlib
+from functools import wraps
+
+logger = logging.getLogger(__name__)
+
+
+def cached_with_ttl(ttl_seconds: int = 60):
+    """简单的TTL缓存装饰器"""
+    cache = {}
+    
+    def decorator(func: Callable):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # 生成缓存键（跳过self参数）
+            key = f"{func.__name__}:{str(args[1:])}:{str(kwargs)}"
+            cache_key = hashlib.md5(key.encode()).hexdigest()
+            
+            now = time.time()
+            
+            # 检查缓存
+            if cache_key in cache:
+                result, expire_time = cache[cache_key]
+                if now < expire_time:
+                    logger.debug(f"缓存命中: {func.__name__}")
+                    return result
+            
+            # 执行函数
+            result = func(*args, **kwargs)
+            
+            # 存入缓存
+            if result is not None:
+                cache[cache_key] = (result, now + ttl_seconds)
+            
+            # 清理过期缓存（简单策略）
+            if len(cache) > 100:
+                expired_keys = [k for k, (_, exp) in cache.items() if now > exp]
+                for k in expired_keys:
+                    del cache[k]
+            
+            return result
+        return wrapper
+    return decorator
 
 
 class DataService:
@@ -30,7 +74,7 @@ class DataService:
             info = {}
             for _, row in df.iterrows():
                 info[row['item']] = row['value']
-            
+            print(info.get('股票简称', ''),code,'',df)
             return {
                 'code': code,
                 'name': info.get('股票简称', ''),
@@ -42,12 +86,13 @@ class DataService:
                 'pb_ratio': info.get('市净率', '')
             }
         except Exception as e:
-            print(f"获取股票信息失败: {e}")
+            logger.error(f"获取股票信息失败 [{code}]: {e}")
             return None
     
+    @cached_with_ttl(ttl_seconds=30)
     def get_realtime_quote(self, code: str) -> Optional[Dict]:
         """
-        获取实时行情
+        获取实时行情（带30秒缓存）
         
         Args:
             code: 股票代码
@@ -55,31 +100,60 @@ class DataService:
         Returns:
             实时行情数据
         """
+        # 尝试多个数据源，带重试机制
+        for attempt in range(2):
+            try:
+                # 方法1：使用 stock_zh_a_spot_em
+                df = ak.stock_zh_a_spot_em()
+                stock = df[df['代码'] == code]
+                if not stock.empty:
+                    row = stock.iloc[0]
+                    return {
+                        'code': code,
+                        'name': row['名称'],
+                        'current_price': float(row['最新价']),
+                        'change_pct': float(row['涨跌幅']),
+                        'change_amount': float(row['涨跌额']),
+                        'volume': float(row['成交量']),
+                        'amount': float(row['成交额']),
+                        'high': float(row['最高']),
+                        'low': float(row['最低']),
+                        'open': float(row['今开']),
+                        'prev_close': float(row['昨收']),
+                        'turnover': float(row['换手率']) if pd.notna(row['换手率']) else 0,
+                        'amplitude': float(row['振幅']) if pd.notna(row['振幅']) else 0
+                    }
+            except Exception as e:
+                logger.warning(f"获取实时行情尝试 {attempt + 1} 失败 [{code}]: {e}")
+                if attempt == 0:
+                    time.sleep(1)  # 等待1秒后重试
+                continue
+        
+        # 方法2：从日线数据获取最新价格作为备选
         try:
-            df = ak.stock_zh_a_spot_em()
-            stock = df[df['代码'] == code]
-            if stock.empty:
-                return None
-            
-            row = stock.iloc[0]
-            return {
-                'code': code,
-                'name': row['名称'],
-                'current_price': float(row['最新价']),
-                'change_pct': float(row['涨跌幅']),
-                'change_amount': float(row['涨跌额']),
-                'volume': float(row['成交量']),
-                'amount': float(row['成交额']),
-                'high': float(row['最高']),
-                'low': float(row['最低']),
-                'open': float(row['今开']),
-                'prev_close': float(row['昨收']),
-                'turnover': float(row['换手率']) if pd.notna(row['换手率']) else 0,
-                'amplitude': float(row['振幅']) if pd.notna(row['振幅']) else 0
-            }
-        except Exception as e:
-            print(f"获取实时行情失败: {e}")
-            return None
+            daily = self.get_daily_data(code, days=1)
+            if daily:
+                latest = daily[-1]
+                return {
+                    'code': code,
+                    'name': '',  # 从其他接口获取
+                    'current_price': latest['close'],
+                    'change_pct': latest['change_pct'],
+                    'change_amount': 0,
+                    'volume': latest['volume'],
+                    'amount': latest['amount'],
+                    'high': latest['high'],
+                    'low': latest['low'],
+                    'open': latest['open'],
+                    'prev_close': 0,
+                    'turnover': latest.get('turnover', 0),
+                    'amplitude': 0
+                }
+        except Exception as e2:
+            logger.error(f"备选实时行情也失败 [{code}]: {e2}")
+        
+        logger.error(f"获取实时行情失败 [{code}]: 所有尝试均失败")
+        return None
     
     def get_daily_data(self, code: str, days: int = 60) -> List[Dict]:
         """
@@ -118,7 +192,7 @@ class DataService:
             
             return result
         except Exception as e:
-            print(f"获取日线数据失败: {e}")
+            logger.error(f"获取日线数据失败 [{code}]: {e}")
             return []
     
     def get_technical_indicators(self, code: str, days: int = 60) -> Dict:
@@ -145,8 +219,7 @@ class DataService:
         ma20 = self._calc_ma(close, 20)
         
         # 计算MACD
-        macd, signal, hist = self._calc_macd(close)
-        macd_signal = "金叉" if hist > 0 and len(df) > 1 else "死叉"
+        macd, signal, hist, macd_signal = self._calc_macd(close)
         
         # 计算KDJ
         k, d, j = self._calc_kdj(df)
@@ -183,7 +256,11 @@ class DataService:
             资金流向数据
         """
         try:
-            df = ak.stock_individual_fund_flow(symbol=code, market="sh" if code.startswith('6') else "sz")
+            # AKShare API 更新：使用 stock 参数而非 symbol
+            df = ak.stock_individual_fund_flow(
+                stock=code, 
+                market="sh" if code.startswith('6') else "sz"
+            )
             if df.empty:
                 return None
             
@@ -196,7 +273,7 @@ class DataService:
                 'retail_net_inflow': float(row['散户净流入-净额']) if pd.notna(row.get('散户净流入-净额', 0)) else 0
             }
         except Exception as e:
-            print(f"获取资金流向失败: {e}")
+            logger.error(f"获取资金流向失败 [{code}]: {e}")
             return None
     
     def _get_market(self, code: str) -> str:
@@ -216,21 +293,48 @@ class DataService:
         return float(np.mean(prices[-period:]))
     
     def _calc_macd(self, prices, fast=12, slow=26, signal=9):
-        """计算MACD"""
-        if len(prices) < slow:
-            return None, None, None
+        """
+        计算MACD指标
+        
+        Returns:
+            (macd_line, signal_line, histogram, signal_text)
+        """
+        if len(prices) < slow + signal:
+            return None, None, None, "数据不足"
+        
+        prices_series = pd.Series(prices)
         
         # 计算EMA
-        ema_fast = self._calc_ema(prices, fast)
-        ema_slow = self._calc_ema(prices, slow)
+        ema_fast = prices_series.ewm(span=fast, adjust=False).mean()
+        ema_slow = prices_series.ewm(span=slow, adjust=False).mean()
         
-        if ema_fast is None or ema_slow is None:
-            return None, None, None
-        
+        # MACD线 = 快线EMA - 慢线EMA
         macd_line = ema_fast - ema_slow
         
-        # 简化计算，取最后一个值
-        return float(macd_line), 0, float(macd_line)
+        # Signal线 = MACD的EMA
+        signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+        
+        # Histogram = MACD - Signal
+        histogram = macd_line - signal_line
+        
+        # 判断金叉/死叉
+        hist_values = histogram.values
+        if len(hist_values) >= 2:
+            if hist_values[-2] < 0 and hist_values[-1] > 0:
+                signal_text = "金叉"
+            elif hist_values[-2] > 0 and hist_values[-1] < 0:
+                signal_text = "死叉"
+            else:
+                signal_text = "多头" if hist_values[-1] > 0 else "空头"
+        else:
+            signal_text = "中性"
+        
+        return (
+            float(macd_line.iloc[-1]),
+            float(signal_line.iloc[-1]),
+            float(histogram.iloc[-1]),
+            signal_text
+        )
     
     def _calc_ema(self, prices, period: int) -> Optional[float]:
         """计算指数移动平均"""

@@ -16,6 +16,28 @@ class CloudLLM:
         self.timeout = 60
         self.max_tokens = 2000
         self.temperature = 0.7
+        # 复用HTTP Client
+        self._client = None
+    
+    def _get_client(self) -> httpx.Client:
+        """获取或创建HTTP Client"""
+        if self._client is None:
+            self._client = httpx.Client(
+                timeout=self.timeout,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                }
+            )
+        return self._client
+    
+    def __del__(self):
+        """清理HTTP Client"""
+        if self._client is not None:
+            try:
+                self._client.close()
+            except:
+                pass
     
     @property
     def enabled(self) -> bool:
@@ -33,6 +55,16 @@ class CloudLLM:
         Returns:
             LLM生成的内容
         """
+        # 打印请求内容
+        print("=" * 50)
+        print("[云端LLM请求]")
+        print(f"模型: {self.model}")
+        print(f"URL: {self.base_url}/v1/chat/completions")
+        if system_prompt:
+            print(f"\n[系统提示词]\n{system_prompt[:500]}...")
+        print(f"\n[用户提示词]\n{prompt[:1000]}...")
+        print("=" * 50)
+        
         if not self.enabled:
             raise RuntimeError("未配置 CLOUD_API_KEY 环境变量")
         
@@ -50,21 +82,15 @@ class CloudLLM:
             "stream": False
         }
         
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-        
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                response = client.post(
-                    f"{self.base_url}/v1/chat/completions",
-                    json=payload,
-                    headers=headers
-                )
-                response.raise_for_status()
-                result = response.json()
-                return result['choices'][0]['message']['content']
+            client = self._get_client()
+            response = client.post(
+                f"{self.base_url}/v1/chat/completions",
+                json=payload
+            )
+            response.raise_for_status()
+            result = response.json()
+            return result['choices'][0]['message']['content']
         except httpx.TimeoutException:
             raise RuntimeError(f"云端LLM请求超时（{self.timeout}秒）")
         except httpx.HTTPStatusError as e:
